@@ -1,6 +1,20 @@
 import mlbstatsapi
 import pandas as pd
 import pybettor
+import requests
+from bs4 import BeautifulSoup as bs
+import json
+import builtins
+type = builtins.type 
+import numpy as np
+from sklearn.model_selection import train_test_split 
+from sklearn.linear_model import LinearRegression, LogisticRegression, Lasso, Ridge
+from sklearn.cluster import KMeans
+from sklearn.metrics import r2_score, mean_squared_error, root_mean_squared_error
+from sklearn import linear_model
+import math
+import statistics
+import matplotlib.pyplot as plt
 import sys
 
 # create mlb instance
@@ -70,6 +84,353 @@ teams = {'Washington Nationals': 'WSH',
           'Baltimore Orioles': 'BAL',
           'Atlanta Braves': 'ATL',
           'Arizona Diamondbacks': 'ARI'}
+
+# util
+def convert_to_replacement(col):
+    if col == 'winPercentage_sp':
+        return 0.294
+    else:
+        return -1
+    
+def filter_cols(df, size, score_present=True):    
+    selected_cols_no_score = ['runs_sp', 'homeRuns_sp', 'strikeOuts_sp', 'baseOnBalls_sp', 'hits_sp',
+                        'hitByPitch_sp', 'totalBases_sp', 'avg_sp', 'obp_sp', 'slg_sp', 'ops_sp',
+                        'whip_sp', 'strikeoutWalkRatio_sp', 'runs_rp', 'homeRuns_rp', 'strikeOuts_rp',
+                        'baseOnBalls_rp', 'hits_rp', 'hitByPitch_rp', 'totalBases_rp', 'avg_rp', 
+                        'obp_rp', 'slg_rp', 'ops_rp', 'whip_rp', 'strikeoutWalkRatio_rp', 'homeRuns',
+                        'strikeOuts', 'baseOnBalls', 'hits', 'hitByPitch', 'totalBases', 'avg',
+                        'obp', 'slg', 'ops']
+    selected_cols = selected_cols_no_score.copy()
+    selected_cols.append('score')
+
+    minimal_cols = ['runs_sp', 'homeRuns_sp', 'strikeOuts_sp', 'baseOnBalls_sp',
+                    'avg_sp', 'obp_sp', 'slg_sp', 'ops_sp', 'whip_sp', 
+                    'runs_rp','strikeOuts_rp',
+                    'baseOnBalls_rp', 'hits_rp', 'avg_rp', 
+                    'obp_rp', 'slg_rp', 'ops_rp', 'whip_rp', 'homeRuns',
+                    'strikeOuts', 'baseOnBalls', 'hitByPitch', 'avg',
+                    'obp', 'slg', 'ops', 'score'] 
+
+    # medium_games_df = df[selected_cols]
+
+    if size == "small":
+        if score_present:
+            return df[selected_cols]
+        else:
+            return df[selected_cols_no_score]
+
+##### over under data ########
+def get_stats_as_of_pitcher(start, end, p1_id, season):
+    as_of_req = requests.get(f"https://statsapi.mlb.com/api/v1/people?personIds={p1_id}&hydrate=stats(group=[pitching],type=[byDateRange],startDate={start},endDate={end},season={season})")
+    as_of_content = as_of_req.content
+    as_of_content_decoded = as_of_content.decode('utf-8')
+    as_of_data = json.loads(as_of_content_decoded)
+
+    stat_dict_original = as_of_data['people'][0]['stats'][0]['splits'][0]['stat']
+        
+    stat_dict_original['hand_sp'] = as_of_data['people'][0]['pitchHand']['code']
+
+    sp_normal = ['groundOuts', 'airOuts', 'runs', 'doubles',
+                    'triples', 'homeRuns', 'strikeOuts', 'baseOnBalls',
+                    'hits', 'hitByPitch', 'groundIntoDoublePlay', 
+                    'earnedRuns', 'wildPitches', 'totalBases']
+    sp_no_normal = ['avg', 'atBats', 'obp', 'slg', 'ops', 'era', 'whip',
+                    'strikePercentage', 'groundOutsToAirouts',
+                    'pitchesPerInning', 'strikeoutWalkRatio',
+                    'strikeoutsPer9Inn', 'walksPer9Inn', 'hitsPer9Inn',
+                    'runsScoredPer9', 'homeRunsPer9']
+    
+    return_stat_dict = {}
+
+    norm_data_sp = {k: float(stat_dict_original[k] / stat_dict_original['battersFaced']) for k in sp_normal}
+    non_norm_data_sp = {k: stat_dict_original[k] for k in sp_no_normal}
+
+    for k, v in norm_data_sp.items():
+        return_stat_dict[f"{k}_sp"] = v
+    for k, v in non_norm_data_sp.items():
+        return_stat_dict[f"{k}_sp"] = v
+
+    return return_stat_dict
+
+def get_stats_as_of_teams(start, end, team_id, season):
+    # constants
+    normalized = ['groundOuts', 'airOuts', 'doubles', 'triples',
+                'homeRuns', 'strikeOuts', 'baseOnBalls', 'hits',
+                'hitByPitch', 'groundIntoDoublePlay', 'totalBases',
+                'rbi', 'leftOnBase', 'sacBunts', 'sacFlies']
+    no_normal = ['avg', 'obp', 'slg', 'ops', 'plateAppearances', 'babip']
+    
+    # get one for versus lefty/righty, get
+    as_of_req = requests.get(f" https://statsapi.mlb.com/api/v1/teams/{team_id}/stats?group=hitting&season={season}&sportIds=1&stats=byDateRange&startDate={start}&endDate={end}")
+    as_of_content = as_of_req.content
+    as_of_content_decoded = as_of_content.decode('utf-8')
+    as_of_data = json.loads(as_of_content_decoded)
+
+    return_dict = {}
+
+    stats = as_of_data['stats'][0]# gives all splits
+
+    for split in stats['splits']:
+
+        # return_dict['split['split']['code']'] = 
+        all_split_data = split['stat']
+
+        normalized_data = {k: float(all_split_data[k] / all_split_data['plateAppearances']) for k in normalized}
+        non_normalized_data = {k: all_split_data[k] for k in no_normal}
+
+        for k, v in normalized_data.items():
+            return_dict[k] = v
+        for k, v in non_normalized_data.items():
+            return_dict[k] = v
+
+    return return_dict
+
+def get_stats_as_of_rp(start, end, team_id, season):
+
+    rp_normal = ['groundOuts', 'airOuts', 'runs', 'doubles',
+                    'triples', 'homeRuns', 'strikeOuts', 'baseOnBalls',
+                    'hits', 'hitByPitch', 'groundIntoDoublePlay', 
+                    'earnedRuns', 'wildPitches', 'totalBases']
+    rp_no_normal = ['avg', 'atBats', 'obp', 'slg', 'ops',
+                    'stolenBasePercentage', 'era', 'whip',
+                    'strikePercentage', 'groundOutsToAirouts',
+                    'pitchesPerInning', 'strikeoutWalkRatio',
+                    'strikeoutsPer9Inn', 'walksPer9Inn', 'hitsPer9Inn',
+                    'runsScoredPer9', 'homeRunsPer9']
+
+    as_of_req = requests.get(f'https://statsapi.mlb.com/api/v1/teams/{team_id}/stats?group=pitching&season={season}&stats=statSplits&sitCodes=rp')
+    as_of_content = as_of_req.content
+    as_of_content_decoded = as_of_content.decode('utf-8')
+    as_of_data = json.loads(as_of_content_decoded)
+
+    return_dict = {}
+
+    stats = as_of_data['stats'][0]# gives all splits
+
+    for split in stats['splits']:
+        code = split['split']['code']
+
+        # return_dict['split['split']['code']'] = 
+        rp_stats = split['stat']
+
+        norm_data_rp = {k: float(rp_stats[k] / rp_stats['battersFaced']) for k in rp_normal}
+        non_norm_data_rp = {k: rp_stats[k] for k in rp_no_normal}
+
+        for k, v in norm_data_rp.items():
+            return_dict[f"{k}_{code}"] = v
+        for k, v in non_norm_data_rp.items():
+            return_dict[f"{k}_{code}"] = v
+
+    return return_dict
+
+def convert_to_replacement(col):
+    if col == 'winPercentage_sp':
+        return 0.294
+    else:
+        return -1
+    
+# this is just for the over under
+def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01", d_end="2024-08-26"):
+    games = []
+
+    oops_counter = 0
+
+    req_shed = requests.get(f'https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher&startDate={games_start}&endDate={games_end}')
+    json_byte_sched = req_shed.content
+    decoded_data_sched = json_byte_sched.decode('utf-8')
+    sched_data = json.loads(decoded_data_sched)
+    dates = sched_data['dates']
+
+    one_team_games = []
+    labels = []
+
+    for d in dates:
+        season = d['date'][:4]
+
+        print(f"Running {d['date']}")
+        sched_games = d['games']
+
+        for g in range (len(sched_games)):
+            try: 
+                game_0 = sched_games[g]
+
+                if game_0['status']['codedGameState'] == 'D':
+                    continue
+
+                if game_0['gameType'] != 'R':
+                    print("Continuing, irregular game")
+                    continue
+
+                game_info_home = {}
+                game_info_away = {}
+
+                away = game_0['teams']['away']
+                home = game_0['teams']['home']
+
+                away_id = away['team']['id']
+                home_id = home['team']['id']
+
+                #game_info_away['away_pct'] = away['leagueRecord']['pct']
+                #game_info_home['away_pct'] = away['leagueRecord']['pct']
+                #game_info_away['home_pct'] = home['leagueRecord']['pct']
+                #game_info_home['home_pct'] = home['leagueRecord']['pct']
+
+                # -------- SP --------
+                away_sp = {'a_sp_name' : away['probablePitcher']['fullName'],
+                                        'a_sp_id' : away['probablePitcher']['id']}
+                home_sp = {'h_sp_name' : home['probablePitcher']['fullName'],
+                                        'h_sp_id' : home['probablePitcher']['id']}
+                
+                away_sp_info = get_stats_as_of_pitcher(d_start, d_end, away_sp['a_sp_id'], season)
+                home_sp_info = get_stats_as_of_pitcher(d_start, d_end, home_sp['h_sp_id'], season)
+
+                for asp_k, asp_v in away_sp_info.items():
+                    game_info_home[asp_k] = asp_v
+                
+                for hsp_k, hsp_v in home_sp_info.items():
+                    game_info_away[hsp_k] = hsp_v
+
+                # ---------- Hitting ------
+                home_hitting_info = get_stats_as_of_teams(d_start, d_end, home_id, season)
+                away_hitting_info = get_stats_as_of_teams(d_start, d_end, away_id, season)
+
+                for hhk, hhv in home_hitting_info.items():
+                    game_info_home[hhk] = hhv
+
+                for ahk, ahv in away_hitting_info.items():
+                    game_info_away[ahk] = ahv
+                
+                # --------- RP --------------
+                home_rp_info = get_stats_as_of_rp(d_start, d_end, home_id, season)
+                away_rp_info = get_stats_as_of_rp(d_start, d_end, away_id, season)
+
+                for arpk, arpv in away_rp_info.items():
+                    game_info_home[arpk] = arpv
+
+                for hrpk, hrpv in home_rp_info.items():
+                    game_info_away[hrpk] = hrpv
+
+
+                # ------- Venue -----------------
+                game_info_home['venue'] = game_0['venue']['name']
+                game_info_away['venue'] = game_0['venue']['name']
+
+                # get_score
+                if past:
+                    game_info_home['score'] = home['score']
+                    game_info_away['score'] = away['score']
+                else:
+                    labels.append(home['team']['name'])
+                    labels.append(away['team']['name'])
+
+                home_good = True
+                away_good = True
+
+                for key, val in game_info_home.items():
+                    if key not in ['hand_sp', 'venue']:
+                        try:
+                            game_info_home[key] = float(val)
+                        except:
+                            if convert_to_replacement(key) > 0:
+                                game_info_home[key] = float(convert_to_replacement(key))
+                            else:
+                                print(f"Bad data, skipping. | {key} : {val}")
+                                home_good = False
+
+                for key, val in game_info_away.items():
+                    if key not in ['hand_sp', 'venue']:
+                        try:
+                            game_info_away[key] = float(val)
+                        except:
+                            if convert_to_replacement(key) > 0:
+                                game_info_away[key] = float(convert_to_replacement(key))
+                            else:
+                                print(f"Bad data, skipping. | {key} : {val}")
+                                away_good = False
+
+                if home_good:
+                    one_team_games.append(game_info_home)
+                
+                if away_good:
+                    one_team_games.append(game_info_away)
+            except Exception as e:
+                print(e)
+                oops_counter += 1
+                continue
+            
+    print("Counter", oops_counter)
+
+    games_df = pd.DataFrame.from_dict(one_team_games)
+
+    return games_df, labels
+
+# for machine learning o/u:
+def run_ridge(d, retrain=False):
+    if retrain:
+        games = get_date_game_info("2024-08-10", "2024-08-26", True)
+    else:
+        games = pd.read_csv("one_team_games_0826.csv")
+
+    full_games_selected = filter_cols(games, "small")
+
+    target = full_games_selected['score']
+    numeric = full_games_selected.loc[:, full_games_selected.columns != 'venue']
+    features = numeric.loc[:, numeric.columns != 'score']
+
+    X_train, X_test, y_train, y_test = train_test_split(features,target , 
+                                    random_state=5,  
+                                    test_size=0.2,  
+                                    shuffle=True)
+    
+    ridge = linear_model.Ridge(alpha=0.5)
+    ridge.fit(X_train, y_train)
+
+    pred_tr = ridge.predict(X_train)
+    pred_tst = ridge.predict(X_test)
+
+    error_train = root_mean_squared_error(pred_tr, y_train)
+    error_test = root_mean_squared_error(pred_tst, y_test)
+
+    print("RMSE train:", error_train)
+    print("RMSE test:", error_test)
+    print("--------------------")
+
+    diffs = []
+
+    for i in range(len(y_test)):
+        diffs.append(abs(y_test.iloc[i] - pred_tst[i]))
+
+    print("Mean", statistics.mean(diffs))
+    print("Median", statistics.median(diffs))
+
+    print("------- Today's predictions: ")
+    games_info = get_date_game_info(d, d, False)
+    games_today = games_info[0]
+    labels = games_info[1]
+
+    today_pred = ridge.predict(filter_cols(games_today, "small", False))
+
+    i = 0
+
+    print("-------------------")
+
+    # set up return for one day
+    return_dict = {}
+
+    while i < (len(today_pred) - 1):
+        home_pred = round(today_pred[i], 2)
+        away_pred = round(today_pred[i + 1], 2)
+        total_pred = round(home_pred + away_pred, 2)
+
+        return_dict[f"{teams[labels[i + 1]]}at{teams[labels[i]]}"]= total_pred
+
+        i += 2 
+    
+    print(return_dict)
+
+    return return_dict
+
+# -------------
 
 # get the scheduled games for a given day. Default to only not started games
 def get_days_games(d, not_started = False):
@@ -164,7 +525,7 @@ def get_pitcher_stats(pitcher_name):
     print(f"{pitcher_name} avg_ip: {avg_ip}")
     return {"rain" : rain, "ip" : ip, 'avg_ip' : avg_ip}
 
-def run_game(g, games_df):
+def run_game(g, games_df, over_under=None):
     skipFlag = False
         
     home_id = g['home_id']
@@ -220,9 +581,12 @@ def run_game(g, games_df):
     away_yh = away_wp - away_fd_implied
     home_yh = home_wp - home_fd_implied
 
+    if over_under:
+        total = over_under[f"{away}at{home}"]
+
     row = {'away' : away, 'home' : home,
             'awayFgvFD': awayFGvFD, 'homeFGvFD' : homeFGvFD,
-            'away_yh' : away_yh, 'home_yh' : home_yh,
+            'away_yh' : away_yh, 'home_yh' : home_yh, 'total' : total,
             'away_wp': away_wp, 'home_wp' : home_wp,
             'away_fd': away_fd_implied, 'home_fd': home_fd_implied,
             'fg_away': fg_away, 'fg_home' : fg_home, 'juice' : juice}
@@ -262,14 +626,15 @@ def run_date(date, sg_df=None):
         row = run_game(g, games_df)
         rows.append(row)
     else:
+        over_unders = run_ridge(dash_date)
         games = get_days_games(dash_date, not_started=False)
 
         rows = []
 
         for g in games:
-            row = run_game(g, games_df)
+            row = run_game(g, games_df, over_unders)
             rows.append(row)
-    
+
     return pd.DataFrame(data=rows)
 
 def run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, away_fg, home_fg, away_sp, home_sp):
@@ -306,5 +671,7 @@ def main():
 
     out.to_csv('output.csv')
     print("Done!")
+
+    # run_ridge(f"2024-{date[:2]}-{date[2:]}")
 
 main()
