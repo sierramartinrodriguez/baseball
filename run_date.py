@@ -12,7 +12,6 @@ from sklearn.linear_model import LinearRegression, LogisticRegression, Lasso, Ri
 from sklearn.cluster import KMeans
 from sklearn.metrics import r2_score, mean_squared_error, root_mean_squared_error
 from sklearn import linear_model
-import math
 import statistics
 import matplotlib.pyplot as plt
 import sys
@@ -354,7 +353,7 @@ def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01",
                 if away_good:
                     one_team_games.append(game_info_away)
             except Exception as e:
-                print(e)
+                print(f"Error on {away['team']['name']} @ {home['team']['name']} | {e}")
                 oops_counter += 1
                 continue
             
@@ -540,6 +539,7 @@ def run_game(g, games_df, over_under=None):
         return {'away' : 0, 'home' : 0,
             'awayFgvFD': 0, 'homeFGvFD' : 0,
             'away_yh' : 0, 'home_yh' : 0,
+            'ou_dif' : 0, 'total' : 0,
             'away_wp': 0, 'home_wp' : 0,
             'away_fd': 0, 'home_fd': 0,
             'fg_away': 0, 'fg_home' : 0, 'juice' : 0}
@@ -582,11 +582,20 @@ def run_game(g, games_df, over_under=None):
     home_yh = home_wp - home_fd_implied
 
     if over_under:
-        total = over_under[f"{away}at{home}"]
+        try:
+            total = over_under[f"{away}at{home}"]
+            ou_diff = games_df.loc[games_df['home'] == home, 'ou_line'].iloc[0] - total
+        except:
+            total = games_df.loc[games_df['home'] == home, 'ou_line'].iloc[0]
+            ou_diff = 0
+    else:
+        total = 0
+        ou_diff = 0
 
     row = {'away' : away, 'home' : home,
             'awayFgvFD': awayFGvFD, 'homeFGvFD' : homeFGvFD,
-            'away_yh' : away_yh, 'home_yh' : home_yh, 'total' : total,
+            'away_yh' : away_yh, 'home_yh' : home_yh, 
+            'ou_diff' : ou_diff, 'total' : total,
             'away_wp': away_wp, 'home_wp' : home_wp,
             'away_fd': away_fd_implied, 'home_fd': home_fd_implied,
             'fg_away': fg_away, 'fg_home' : fg_home, 'juice' : juice}
@@ -627,7 +636,7 @@ def run_date(date, sg_df=None):
         rows.append(row)
     else:
         over_unders = run_ridge(dash_date)
-        games = get_days_games(dash_date, not_started=False)
+        games = get_days_games(dash_date, not_started=True)
 
         rows = []
 
@@ -637,8 +646,8 @@ def run_date(date, sg_df=None):
 
     return pd.DataFrame(data=rows)
 
-def run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, away_fg, home_fg, away_sp, home_sp):
-    single_game_row = {'away' : away_abbrev, 'home': home_abbrev, 'fd_away' : float(away_fd), 'fd_home': float(home_fd),
+def run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, ou_line, away_fg, home_fg, away_sp, home_sp):
+    single_game_row = {'away' : away_abbrev, 'home': home_abbrev, 'fd_away' : float(away_fd), 'fd_home': float(home_fd), 'ou_line' : float(ou_line),
                        'fg_wp_away' : float(away_fg), 'fg_wp_home' : float(home_fg), 'away_sp' : away_sp, 'home_sp' : home_sp}
     single_game_df = pd.DataFrame(single_game_row, index = [0])
     return run_date(date, single_game_df)
@@ -659,19 +668,18 @@ def main():
         home_abbrev = sys.argv[4]
         away_fd = sys.argv[5]
         home_fd = sys.argv[6]
-        away_fg = sys.argv[7]
-        home_fg = sys.argv[8]
-        away_sp = sys.argv[9]
-        home_sp = sys.argv[10]
+        ou_line = sys.argv[7]
+        away_fg = sys.argv[8]
+        home_fg = sys.argv[9]
+        away_sp = sys.argv[10]
+        home_sp = sys.argv[11]
 
-        out = run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, away_fg, home_fg, away_sp, home_sp)
+        out = run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, ou_line, away_fg, home_fg, away_sp, home_sp)
     else:
         raise Exception("Game not found")
         
 
     out.to_csv('output.csv')
     print("Done!")
-
-    # run_ridge(f"2024-{date[:2]}-{date[2:]}")
 
 main()
