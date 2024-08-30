@@ -269,12 +269,8 @@ def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01",
                 away_id = away['team']['id']
                 home_id = home['team']['id']
 
-                #game_info_away['away_pct'] = away['leagueRecord']['pct']
-                #game_info_home['away_pct'] = away['leagueRecord']['pct']
-                #game_info_away['home_pct'] = home['leagueRecord']['pct']
-                #game_info_home['home_pct'] = home['leagueRecord']['pct']
-
                 # -------- SP --------
+
                 away_sp = {'a_sp_name' : away['probablePitcher']['fullName'],
                                         'a_sp_id' : away['probablePitcher']['id']}
                 home_sp = {'h_sp_name' : home['probablePitcher']['fullName'],
@@ -442,10 +438,25 @@ def get_days_games(d, not_started = False):
             continue
         home_id = game.teams.home.team.id
         away_id = game.teams.away.team.id
-        home = game.teams.home.team.name
-        away = game.teams.away.team.name
+        home = game.teams.home
+        away = game.teams.away
+        home_name = game.teams.home.team.name
+        away_name = game.teams.away.team.name
 
-        games.append({'home_id': home_id, 'away_id' : away_id, 'home' : home, 'away': away})
+        print(game.teams)
+        try:
+            away_sp = {'a_sp_name' : away['probablePitcher']['fullName'],
+                       'a_sp_id' : away['probablePitcher']['id']}
+        except:
+            away_sp = {'a_sp_name' : 'na', 'a_sp_id' : 0}
+
+        try:
+            home_sp = {'h_sp_name' : home['probablePitcher']['fullName'],
+                       'h_sp_id' : home['probablePitcher']['id']}
+        except:
+            home_sp = {'h_sp_name' : 'na', 'h_sp_id' : 0}
+
+        games.append({'home_id': home_id, 'away_id' : away_id, 'home' : home_name, 'away': away_name, 'away_sp' : away_sp, 'home_sp' : home_sp})
     
     return games
 
@@ -529,8 +540,10 @@ def run_game(g, games_df, over_under=None):
         
     home_id = g['home_id']
     away_id = g['away_id']
-    home = teams[g['home']]
-    away = teams[g['away']]
+    away = g['away']
+    home = g['home']
+    away_sp = g['away_sp']
+    home_sp = g['home_sp']
 
     #if home == 'NYY':
     #    skipFlag = True
@@ -544,15 +557,16 @@ def run_game(g, games_df, over_under=None):
             'away_fd': 0, 'home_fd': 0,
             'fg_away': 0, 'fg_home' : 0, 'juice' : 0}
 
-    print(f"Home: {home} | Away: {away}")
-
     home_team_stats = get_team_stats(home_id)
     away_team_stats = get_team_stats(away_id)
 
-    away_sp = games_df.loc[games_df['away'] == away, 'away_sp'].iloc[0]
-    home_sp = games_df.loc[games_df['home'] == home, 'home_sp'].iloc[0]
-    away_pitcher_stats = get_pitcher_stats(away_sp)
-    home_pitcher_stats = get_pitcher_stats(home_sp)
+    print(f"Home: {home} | Away: {away}")
+    home = teams[g['home']]
+    away = teams[g['away']]
+
+    print(away_sp['a_sp_name'])
+    away_pitcher_stats = get_pitcher_stats(away_sp['a_sp_name'])
+    home_pitcher_stats = get_pitcher_stats(home_sp['h_sp_name'])
 
     away_pythag = get_pythag_win_pct(away_team_stats['rs'],
                                     away_pitcher_stats['rain'],
