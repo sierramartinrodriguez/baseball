@@ -72,7 +72,7 @@ teams = {'Washington Nationals': 'WSH',
           'Arizona Diamondbacks': 'ARI'}
 
 # get the scheduled games for a given day. Default to only not started games
-def get_days_games(d, not_started = True):
+def get_days_games(d, not_started = False):
     schedule = mlb.get_scheduled_games_by_date(d)
     
     games = []
@@ -164,82 +164,146 @@ def get_pitcher_stats(pitcher_name):
     print(f"{pitcher_name} avg_ip: {avg_ip}")
     return {"rain" : rain, "ip" : ip, 'avg_ip' : avg_ip}
 
-def run_date(date):
+def run_game(g, games_df):
+    skipFlag = False
+        
+    home_id = g['home_id']
+    away_id = g['away_id']
+    home = teams[g['home']]
+    away = teams[g['away']]
+
+    #if home == 'NYY':
+    #    skipFlag = True
+    if skipFlag:
+        print(f"Skipping.... | Home: {home} | Away: {away}")
+        return {'away' : 0, 'home' : 0,
+            'awayFgvFD': 0, 'homeFGvFD' : 0,
+            'away_yh' : 0, 'home_yh' : 0,
+            'away_wp': 0, 'home_wp' : 0,
+            'away_fd': 0, 'home_fd': 0,
+            'fg_away': 0, 'fg_home' : 0, 'juice' : 0}
+
+    print(f"Home: {home} | Away: {away}")
+
+    home_team_stats = get_team_stats(home_id)
+    away_team_stats = get_team_stats(away_id)
+
+    away_sp = games_df.loc[games_df['away'] == away, 'away_sp'].iloc[0]
+    home_sp = games_df.loc[games_df['home'] == home, 'home_sp'].iloc[0]
+    away_pitcher_stats = get_pitcher_stats(away_sp)
+    home_pitcher_stats = get_pitcher_stats(home_sp)
+
+    away_pythag = get_pythag_win_pct(away_team_stats['rs'],
+                                    away_pitcher_stats['rain'],
+                                    away_pitcher_stats['avg_ip'], 
+                                    away_team_stats['rain'], 
+                                    away_team_stats['gp'])
+    home_pythag = get_pythag_win_pct(home_team_stats['rs'],
+                                    home_pitcher_stats['rain'],
+                                    home_pitcher_stats['avg_ip'], 
+                                    home_team_stats['rain'], 
+                                    home_team_stats['gp'])
+                                    
+
+    home_wp = round(win_prob(home_pythag, away_pythag) + 0.025, 3) 
+    away_wp = 1 - home_wp
+
+    away_fd_implied = round(pybettor.implied_prob(int(games_df.loc[games_df['away'] == away, 'fd_away'].iloc[0]), category="us")[0], 3)
+    home_fd_implied = round(pybettor.implied_prob(int(games_df.loc[games_df['home'] == home, 'fd_home'].iloc[0]), category="us")[0], 3)
+    juice = (away_fd_implied + home_fd_implied) - 1
+
+    fg_away = games_df.loc[games_df['away'] == away, 'fg_wp_away'].iloc[0]
+    fg_home = games_df.loc[games_df['home'] == home, 'fg_wp_home'].iloc[0]
+
+    awayFGvFD = fg_away - away_fd_implied
+    homeFGvFD = fg_home - home_fd_implied
+    away_yh = away_wp - away_fd_implied
+    home_yh = home_wp - home_fd_implied
+
+    row = {'away' : away, 'home' : home,
+            'awayFgvFD': awayFGvFD, 'homeFGvFD' : homeFGvFD,
+            'away_yh' : away_yh, 'home_yh' : home_yh,
+            'away_wp': away_wp, 'home_wp' : home_wp,
+            'away_fd': away_fd_implied, 'home_fd': home_fd_implied,
+            'fg_away': fg_away, 'fg_home' : fg_home, 'juice' : juice}
+    
+    return row
+
+# return g obj if this is the correct game        
+def find_game(dash_date, away_abbrev, home_abbrev):
+    games = get_days_games(dash_date, not_started=False)
+
+    # gives us home and away id's for a game:
+    for g in games:
+        api_home = g['home']
+        api_away = g['away']
+
+        if (teams[api_away] == away_abbrev) and (teams[api_home] == home_abbrev):
+            return g
+
+    raise Exception("Game not found")
+
+def run_date(date, sg_df=None):
     # receive date as MMDD
-    games_df = pd.read_csv(f'games_2024{date}.csv')
+    if sg_df is not None:
+        games_df = sg_df
+    else:
+        games_df = pd.read_csv(f'games_2024{date}.csv')
+
     date = str(date)
     dash_date = f"2024-{date[:2]}-{date[2:]}"
-    games = get_days_games(dash_date, not_started=True)
 
     rows = []
 
-    for g in games:
-        skipFlag = False
+    if sg_df is not None:
+        # i have to get g, which is just the one in which
+        g = find_game(dash_date, sg_df['away'][0], sg_df['home'][0])
 
-        
-        home_id = g['home_id']
-        away_id = g['away_id']
-        home = teams[g['home']]
-        away = teams[g['away']]
-
-        #if home == 'NYY':
-        #    skipFlag = True
-        if skipFlag:
-            print(f"Skipping.... | Home: {home} | Away: {away}")
-            continue
-        
-        print(f"Home: {home} | Away: {away}")
-
-        home_team_stats = get_team_stats(home_id)
-        away_team_stats = get_team_stats(away_id)
-
-        away_sp = games_df.loc[games_df['away'] == away, 'away_sp'].iloc[0]
-        home_sp = games_df.loc[games_df['home'] == home, 'home_sp'].iloc[0]
-        away_pitcher_stats = get_pitcher_stats(away_sp)
-        home_pitcher_stats = get_pitcher_stats(home_sp)
-
-        away_pythag = get_pythag_win_pct(away_team_stats['rs'],
-                                        away_pitcher_stats['rain'],
-                                        away_pitcher_stats['avg_ip'], 
-                                        away_team_stats['rain'], 
-                                        away_team_stats['gp'])
-        home_pythag = get_pythag_win_pct(home_team_stats['rs'],
-                                        home_pitcher_stats['rain'],
-                                        home_pitcher_stats['avg_ip'], 
-                                        home_team_stats['rain'], 
-                                        home_team_stats['gp'])
-                                        
-
-        home_wp = round(win_prob(home_pythag, away_pythag) + 0.025, 3) 
-        away_wp = 1 - home_wp
-
-        away_fd_implied = round(pybettor.implied_prob(int(games_df.loc[games_df['away'] == away, 'fd_away'].iloc[0]), category="us")[0], 3)
-        home_fd_implied = round(pybettor.implied_prob(int(games_df.loc[games_df['home'] == home, 'fd_home'].iloc[0]), category="us")[0], 3)
-        juice = (away_fd_implied + home_fd_implied) - 1
-
-        fg_away = games_df.loc[games_df['away'] == away, 'fg_wp_away'].iloc[0]
-        fg_home = games_df.loc[games_df['home'] == home, 'fg_wp_home'].iloc[0]
-
-        awayFGvFD = fg_away - away_fd_implied
-        homeFGvFD = fg_home - home_fd_implied
-        away_yh = away_wp - away_fd_implied
-        home_yh = home_wp - home_fd_implied
-
-        row = {'away' : away, 'home' : home,
-               'awayFgvFD': awayFGvFD, 'homeFGvFD' : homeFGvFD,
-              'away_yh' : away_yh, 'home_yh' : home_yh,
-              'away_wp': away_wp, 'home_wp' : home_wp,
-              'away_fd': away_fd_implied, 'home_fd': home_fd_implied,
-              'fg_away': fg_away, 'fg_home' : fg_home, 'juice' : juice}
-
+        row = run_game(g, games_df)
         rows.append(row)
+    else:
+        games = get_days_games(dash_date, not_started=False)
+
+        rows = []
+
+        for g in games:
+            row = run_game(g, games_df)
+            rows.append(row)
     
     return pd.DataFrame(data=rows)
 
+def run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, away_fg, home_fg, away_sp, home_sp):
+    single_game_row = {'away' : away_abbrev, 'home': home_abbrev, 'fd_away' : float(away_fd), 'fd_home': float(home_fd),
+                       'fg_wp_away' : float(away_fg), 'fg_wp_home' : float(home_fg), 'away_sp' : away_sp, 'home_sp' : home_sp}
+    single_game_df = pd.DataFrame(single_game_row, index = [0])
+    return run_date(date, single_game_df)
+
+
 def main():
-    inp = sys.argv[1]
-    print(f"Running games for {inp[:2]}/{inp[2:]}/2024")
-    out = run_date(inp)
+    date = sys.argv[1]
+    all_flag = sys.argv[2]
+
+    if all_flag == 'all':
+        print(f"Running games for {date[:2]}/{date[2:]}/2024")
+        
+        out = run_date(date)
+    elif all_flag == 'single':
+        print("Running single game")
+
+        away_abbrev = sys.argv[3]
+        home_abbrev = sys.argv[4]
+        away_fd = sys.argv[5]
+        home_fd = sys.argv[6]
+        away_fg = sys.argv[7]
+        home_fg = sys.argv[8]
+        away_sp = sys.argv[9]
+        home_sp = sys.argv[10]
+
+        out = run_single_game(date, away_abbrev, home_abbrev, away_fd, home_fd, away_fg, home_fg, away_sp, home_sp)
+    else:
+        raise Exception("Game not found")
+        
+
     out.to_csv('output.csv')
     print("Done!")
 
