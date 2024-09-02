@@ -227,10 +227,8 @@ def convert_to_replacement(col):
         return 0.294
     else:
         return -1
-    
-# this is just for the over under
-def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01", d_end="2024-08-26"):
-    games = []
+
+def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01", d_end="2024-08-26", not_started = False):
 
     oops_counter = 0
 
@@ -240,6 +238,7 @@ def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01",
     sched_data = json.loads(decoded_data_sched)
     dates = sched_data['dates']
 
+    two_team_games = []
     one_team_games = []
     labels = []
 
@@ -256,6 +255,9 @@ def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01",
                 if game_0['status']['codedGameState'] == 'D':
                     continue
 
+                if not_started and (game_0['status']['codedGameState'] in ['I', 'F']):
+                    continue
+
                 if game_0['gameType'] != 'R':
                     print("Continuing, irregular game")
                     continue
@@ -269,16 +271,14 @@ def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01",
                 away_id = away['team']['id']
                 home_id = home['team']['id']
 
-                #game_info_away['away_pct'] = away['leagueRecord']['pct']
-                #game_info_home['away_pct'] = away['leagueRecord']['pct']
-                #game_info_away['home_pct'] = home['leagueRecord']['pct']
-                #game_info_home['home_pct'] = home['leagueRecord']['pct']
-
                 # -------- SP --------
                 away_sp = {'a_sp_name' : away['probablePitcher']['fullName'],
                                         'a_sp_id' : away['probablePitcher']['id']}
                 home_sp = {'h_sp_name' : home['probablePitcher']['fullName'],
                                         'h_sp_id' : home['probablePitcher']['id']}
+                
+                two_team_games.append({'home_id': home_id, 'away_id' : away_id, 'home' : home['team']['name'], 'away': away['team']['name'],
+                                       'away_sp' : away_sp, 'home_sp': home_sp})
                 
                 away_sp_info = get_stats_as_of_pitcher(d_start, d_end, away_sp['a_sp_id'], season)
                 home_sp_info = get_stats_as_of_pitcher(d_start, d_end, home_sp['h_sp_id'], season)
@@ -361,10 +361,10 @@ def get_date_game_info(games_start, games_end, past=False, d_start="2024-01-01",
 
     games_df = pd.DataFrame.from_dict(one_team_games)
 
-    return games_df, labels
+    return games_df, labels, two_team_games
 
 # for machine learning o/u:
-def run_ridge(d, retrain=False):
+def run_ridge(today_games, today_labels, retrain=False):
     if retrain:
         games = get_date_game_info("2024-08-10", "2024-08-26", True)
     else:
@@ -403,11 +403,8 @@ def run_ridge(d, retrain=False):
     print("Median", statistics.median(diffs))
 
     print("------- Today's predictions: ")
-    games_info = get_date_game_info(d, d, False)
-    games_today = games_info[0]
-    labels = games_info[1]
 
-    today_pred = ridge.predict(filter_cols(games_today, "small", False))
+    today_pred = ridge.predict(filter_cols(today_games, "small", False))
 
     i = 0
 
@@ -421,8 +418,8 @@ def run_ridge(d, retrain=False):
         away_pred = round(today_pred[i + 1], 2)
         total_pred = round(home_pred + away_pred, 2)
 
-        return_dict[f"{teams[labels[i + 1]]}at{teams[labels[i]]}"]= total_pred
-
+        return_dict[f"{teams[today_labels[i + 1]]}at{teams[today_labels[i]]}"]= total_pred
+ 
         i += 2 
     
     print(return_dict)
@@ -430,24 +427,6 @@ def run_ridge(d, retrain=False):
     return return_dict
 
 # -------------
-
-# get the scheduled games for a given day. Default to only not started games
-def get_days_games(d, not_started = False):
-    schedule = mlb.get_scheduled_games_by_date(d)
-    
-    games = []
-
-    for game in schedule:
-        if not_started and (game.status.codedgamestate in ['I', 'F']):
-            continue
-        home_id = game.teams.home.team.id
-        away_id = game.teams.away.team.id
-        home = game.teams.home.team.name
-        away = game.teams.away.team.name
-
-        games.append({'home_id': home_id, 'away_id' : away_id, 'home' : home, 'away': away})
-    
-    return games
 
 # get team's stats for a given team ID
 def get_team_stats(team_id):
@@ -549,8 +528,8 @@ def run_game(g, games_df, over_under=None):
     home_team_stats = get_team_stats(home_id)
     away_team_stats = get_team_stats(away_id)
 
-    away_sp = games_df.loc[games_df['away'] == away, 'away_sp'].iloc[0]
-    home_sp = games_df.loc[games_df['home'] == home, 'home_sp'].iloc[0]
+    away_sp = g['away_sp']['a_sp_name']
+    home_sp = g['home_sp']['h_sp_name']
     away_pitcher_stats = get_pitcher_stats(away_sp)
     home_pitcher_stats = get_pitcher_stats(home_sp)
 
@@ -626,21 +605,26 @@ def run_date(date, sg_df=None):
     date = str(date)
     dash_date = f"2024-{date[:2]}-{date[2:]}"
 
+    games_return = get_date_game_info(dash_date, dash_date, past=False, not_started = False)
+    one_team_games = games_return[0]
+    labels = games_return[1]
+    two_team_games = games_return[2]
+
     rows = []
 
     if sg_df is not None:
         # i have to get g, which is just the one in which
-        g = find_game(dash_date, sg_df['away'][0], sg_df['home'][0])
+        g = find_game(dash_date, sg_df['away'][0], sg_df['home'][0]) # TODO : Fix this one
 
         row = run_game(g, games_df)
         rows.append(row)
     else:
-        over_unders = run_ridge(dash_date)
-        games = get_days_games(dash_date, not_started=True)
+        print(one_team_games)
+        over_unders = run_ridge(one_team_games, labels, retrain=False) # run_ridge(today_games, today_labels, retrain=False):
 
         rows = []
 
-        for g in games:
+        for g in two_team_games:
             row = run_game(g, games_df, over_unders)
             rows.append(row)
 
