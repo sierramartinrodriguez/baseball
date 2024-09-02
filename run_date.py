@@ -584,7 +584,7 @@ def run_game(g, games_df, over_under=None):
     if over_under:
         try:
             total = over_under[f"{away}at{home}"]
-            ou_diff = games_df.loc[games_df['home'] == home, 'ou_line'].iloc[0] - total
+            ou_diff = total - games_df.loc[games_df['home'] == home, 'ou_line'].iloc[0]
         except:
             total = games_df.loc[games_df['home'] == home, 'ou_line'].iloc[0]
             ou_diff = 0
